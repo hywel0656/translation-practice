@@ -1,60 +1,59 @@
 import streamlit as st
 import json
-import os
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
+import random
+from sentence_transformers import SentenceTransformer, util
 
-# Load or initialize translation data
-DATA_FILE = "data/translations.json"
-if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        translations = json.load(f)
-else:
-    translations = []
+# Load the model once
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load sentence transformer model
-model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+# Load translation data
+with open("data/translations.json", "r", encoding="utf-8") as f:
+    translations = json.load(f)
 
-st.title("Translation Practice App")
+# Session state setup
+if "current_index" not in st.session_state:
+    st.session_state.current_index = random.randint(0, len(translations) - 1)
+if "show_answer" not in st.session_state:
+    st.session_state.show_answer = False
+if "score" not in st.session_state:
+    st.session_state.score = None
 
-if not translations:
-    st.warning("No translation entries found. Please add some examples to `data/translations.json`.")
-else:
-    # Select a translation entry
-    entry_idx = st.selectbox("Choose a translation task", range(len(translations)), format_func=lambda i: translations[i]["japanese"])
-    entry = translations[entry_idx]
+# Current item
+item = translations[st.session_state.current_index]
+japanese = item["japanese"]
+correct_english = item["english"]
 
-    # Show Japanese sentence and input box
-    st.write("**Japanese:**", entry["japanese"])
-    user_input = st.text_input("Your English translation:")
+# App UI
+st.title("Japanese → English Translation Practice")
+st.subheader("Translate the following Japanese sentence into English:")
 
-    if user_input:
-        # Get reference sentences
-        references = [entry["english"]] + entry.get("alternatives", [])
-        
-        # Encode embeddings properly
-        user_embedding = model.encode(user_input)
-        ref_embeddings = model.encode(references)
+st.markdown(f"**{japanese}**")
 
-        # Ensure proper shape (2D) for cosine similarity
-        user_embedding = np.array(user_embedding).reshape(1, -1)
-        ref_embeddings = np.array(ref_embeddings)
+user_input = st.text_input("Your English translation:")
 
-        # Calculate similarity scores
-        scores = cosine_similarity(user_embedding, ref_embeddings)[0]
-        best_score = max(scores)
+if st.button("Check"):
+    st.session_state.show_answer = True
+    # Compute cosine similarity
+    emb_user = model.encode(user_input, convert_to_tensor=True)
+    emb_correct = model.encode(correct_english, convert_to_tensor=True)
+    similarity = util.cos_sim(emb_user, emb_correct).item()
+    st.session_state.score = similarity
 
-        st.write("**Similarity Score:**", f"{best_score:.2f}")
-
-        # Show all reference scores
-        with st.expander("See all reference comparisons"):
-            for ref, score in zip(references, scores):
-                st.write(f"`{ref}` → {score:.2f}")
-
-        if best_score > 0.8:
-            st.success("Great job! Your translation is quite similar.")
-        elif best_score > 0.6:
-            st.info("Not bad, but you could get closer.")
+if st.session_state.show_answer:
+    st.markdown("---")
+    st.markdown(f"**Expected translation:** {correct_english}")
+    if st.session_state.score is not None:
+        score_pct = round(st.session_state.score * 100, 2)
+        st.markdown(f"**Similarity score:** {score_pct}%")
+        if score_pct > 90:
+            st.success("Excellent! ✅")
+        elif score_pct > 70:
+            st.info("Pretty good! 👍")
         else:
-            st.warning("Your translation seems quite different.")
+            st.warning("Not very close. Try again! ❗")
+
+if st.button("Next"):
+    st.session_state.current_index = random.randint(0, len(translations) - 1)
+    st.session_state.show_answer = False
+    st.session_state.score = None
+    st.rerun()
